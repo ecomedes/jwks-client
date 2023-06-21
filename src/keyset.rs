@@ -1,6 +1,8 @@
 use std::time::{Duration, SystemTime};
 
-use base64::{decode_config, URL_SAFE_NO_PAD};
+use base64::alphabet::URL_SAFE;
+use base64::Engine;
+use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use regex::Regex;
 use reqwest;
 use reqwest::Response;
@@ -63,16 +65,14 @@ pub struct KeyStore {
 
 impl KeyStore {
     pub fn new() -> KeyStore {
-        let key_store = KeyStore {
+        KeyStore {
             key_url: "".to_owned(),
             keys: vec![],
             refresh_interval: 0.5,
             load_time: None,
             expire_time: None,
             refresh_time: None,
-        };
-
-        key_store
+        }
     }
 
     pub async fn new_from(jkws_url: String) -> Result<KeyStore, Error> {
@@ -163,7 +163,7 @@ impl KeyStore {
     }
 
     fn decode_segments(&self, token: &str) -> Result<(Header, Payload, Signature, HeaderBody), Error> {
-        let raw_segments: Vec<&str> = token.split(".").collect();
+        let raw_segments: Vec<&str> = token.split('.').collect();
         if raw_segments.len() != 3 {
             return Err(err_inv("JWT does not have 3 segments"));
         }
@@ -172,8 +172,8 @@ impl KeyStore {
         let payload_segment = raw_segments[1];
         let signature_segment = raw_segments[2].to_string();
 
-        let header = Header::new(decode_segment::<Value>(header_segment).or(Err(err_hea("Failed to decode header")))?);
-        let payload = Payload::new(decode_segment::<Value>(payload_segment).or(Err(err_pay("Failed to decode payload")))?);
+        let header = Header::new(decode_segment::<Value>(header_segment).map_err(|_| err_hea("Failed to decode header"))?);
+        let payload = Payload::new(decode_segment::<Value>(payload_segment).map_err(|_| err_pay("Failed to decode payload"))?);
 
         let body = format!("{}.{}", header_segment, payload_segment);
 
@@ -193,12 +193,14 @@ impl KeyStore {
             return Err(err_inv("Unsupported algorithm"));
         }
 
-        let kid = header.kid().ok_or(err_key("No key id"))?;
+        let kid = header.kid().ok_or_else(|| err_key("No key id"))?;
 
-        let key = self.key_by_id(kid).ok_or(err_key("JWT key does not exists"))?;
+        let key = self.key_by_id(kid).ok_or_else(|| err_key("JWT key does not exist"))?;
 
-        let e = decode_config(&key.e, URL_SAFE_NO_PAD).or(Err(err_cer("Failed to decode exponent")))?;
-        let n = decode_config(&key.n, URL_SAFE_NO_PAD).or(Err(err_cer("Failed to decode modulus")))?;
+        let engine = build_engine();
+
+        let e = engine.decode(&key.e).map_err(|_| err_cer("Failed to decode exponent"))?;
+        let n = engine.decode(&key.n).map_err(|_| err_cer("Failed to decode modulus"))?;
 
         verify_signature(&e, &n, &body, &signature)?;
 
@@ -236,10 +238,7 @@ impl KeyStore {
     ///
     /// None if keys do not have an expiration time
     pub fn keys_expired(&self) -> Option<bool> {
-        match self.expire_time {
-            Some(expire) => Some(expire <= SystemTime::now()),
-            None => None,
-        }
+        self.expire_time.map(|expire| expire <= SystemTime::now())
     }
 
     /// Specifies the interval (as a fraction) when the key store should refresh it's key.
@@ -293,21 +292,34 @@ impl KeyStore {
     }
 }
 
+impl Default for KeyStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn verify_signature(e: &Vec<u8>, n: &Vec<u8>, message: &str, signature: &str) -> Result<(), Error> {
     let pkc = RsaPublicKeyComponents { e, n };
 
     let message_bytes = &message.as_bytes().to_vec();
-    let signature_bytes = decode_config(&signature, URL_SAFE_NO_PAD).or(Err(err_sig("Could not base64 decode signature")))?;
+    let signature_bytes = build_engine().decode(signature).map_err(|_| err_sig("Could not base64 decode signature"))?;
 
-    let result = pkc.verify(&RSA_PKCS1_2048_8192_SHA256, &message_bytes, &signature_bytes);
+    let result = pkc.verify(&RSA_PKCS1_2048_8192_SHA256, message_bytes, &signature_bytes);
 
-    result.or(Err(err_cer("Signature does not match certificate")))
+    result.map_err(|_| err_cer("Signature does not match certificate"))
 }
 
 fn decode_segment<T: DeserializeOwned>(segment: &str) -> Result<T, Error> {
-    let raw = decode_config(segment, base64::URL_SAFE_NO_PAD).or(Err(err_inv("Failed to decode segment")))?;
+    let raw = build_engine().decode(segment).map_err(|_| err_inv("Failed to decode segment"))?;
     let slice = String::from_utf8_lossy(&raw);
-    let decoded: T = serde_json::from_str(&slice).or(Err(err_inv("Failed to decode segment")))?;
+    let decoded: T = serde_json::from_str(&slice).map_err(|_| err_inv("Failed to decode segment"))?;
 
     Ok(decoded)
+}
+
+fn build_engine() -> GeneralPurpose {
+    GeneralPurpose::new(
+        &URL_SAFE,
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::RequireNone),
+    )
 }

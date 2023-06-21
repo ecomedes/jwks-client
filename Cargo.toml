@@ -3,8 +3,8 @@ name = "jwks-client"
 version = "0.2.0"
 authors = ["Jean-François Bilodeau <jfbilodeau@chronogears.com>"]
 edition = "2018"
-keywords = [ "jwt", "jwks", "jwk", "gcp" ]
-categories = [ "web-programming", "cryptography", "authentication" ]
+keywords = ["jwt", "jwks", "jwk", "gcp"]
+categories = ["web-programming", "cryptography", "authentication"]
 license = "MIT"
 homepage = "https://github.com/jfbilodeau/jwks-client"
 repository = "https://github.com/jfbilodeau/jwks-client"
@@ -14,13 +14,13 @@ readme = "README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-base64 = "^0.11.0"
-reqwest = {version = "0.11.0", features = ["json"]}
-serde = {version = "1", features = ["derive"]}
-serde_json = "1"
-regex = "1"
-ring = "^0.16.0"
+base64 = "0.21"
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+regex = "1.8"
+ring = "0.16"
 
 [dev-dependencies]
-tokio = {version = "1", features = ["macros", "rt-multi-thread"]}
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio-test = "0.4"
